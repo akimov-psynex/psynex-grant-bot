@@ -203,7 +203,13 @@ def main():
     new_grants.sort(key=lambda x: x[1].get("score",0), reverse=True)
 
     print(f"\n🆕 Нових: {len(new_grants)}")
+
     if not new_grants:
+        send_telegram(
+            f"📭 <b>Psynex Grant Bot — {now}</b>\n"
+            f"Нових релевантних грантів сьогодні: 0\n"
+            f"Перевірено запитів: {len(SEARCH_QUERIES)}"
+        )
         save_seen(seen)
         return
 
