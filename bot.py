@@ -1,7 +1,7 @@
 """
-Psynex Grant Bot v4
-Кожен запит = окремий Claude API виклик.
-Природні запити без site: операторів.
+Psynex Grant Research Bot
+Щодня о 09:00 шукає гранти по всій Європі через Claude web search
+та надсилає знахідки в Telegram.
 """
 
 import os
@@ -9,8 +9,7 @@ import json
 import hashlib
 import requests
 import anthropic
-from datetime import datetime, timedelta
-import time
+from datetime import datetime
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT  = os.environ["TELEGRAM_CHAT_ID"]
@@ -18,63 +17,93 @@ ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
 SEEN_FILE      = "seen_grants.json"
 MIN_SCORE      = 6
 
-TODAY    = datetime.now()
-DATE_STR = TODAY.strftime("%d.%m.%Y")
-
 PSYNEX_PROFILE = """
-КОМПАНІЯ: ТОВ «ПСАЙНЕКС» (Psynex), psynex.app, Київ, Diia.City, ЄДРПОУ 46150138
-РЕЄСТРАЦІЯ: 12.11.2025
-EU Funding Portal PIC: 864846957
-Horizon Europe: eligible (Україна — асоційована країна)
-ПРОДУКТ: AI-платформа самопізнання та свідомої побудови стосунків (dating через self-discovery)
-СТАДІЯ: Pre-seed, bridge $50K → $250K, post-money cap $2.5M, TRL 7, 208 beta users
-КОМАНДА: 5 співзасновників, <10 осіб
+КОМПАНІЯ:
+- Назва: ТОВ «ПСАЙНЕКС» (бренд: Psynex), сайт: psynex.app
+- Країна: Україна, Київ. Diia.City резидент. ЄДРПОУ: 46150138
+- Дата реєстрації: 12.11.2025
+- EU Funding Portal PIC: 864846957
+- Horizon Europe: eligible (Україна — асоційована країна)
 
-ВЖЕ ОТРИМАНІ: Anthropic $1.5K, AWS $25.1K, ElevenLabs 33M chars, Mixpanel 1 рік, PostHog $50K, Sentry $5K, Microsoft $1K
-ВІДХИЛЕНІ: Google for Startups, Vercel
-ПАЙПЛАЙН: USF EDGE, EIT Jumpstarter, YC W27, NVIDIA Inception, Cloudflare, EIC Accelerator, Win-Win EDIH
+ПРОДУКТ:
+- AI-платформа самопізнання та свідомої побудови стосунків
+- КАТЕГОРІЯ: dating через self-discovery (НЕ mental health, НЕ therapy)
+- Аналоги: Hinge, Bumble, So Syncd
+- 5 модулів: Explorer, MindID, Match, Insight, Connect
+- 6 наукових фреймворків: теорія прив'язаності, MBTI, Big Five, Еннеаграма, Соціоніка, нейронаука
+- TRL 7, MVP живий
 
-ВИМОГИ: грошовий грант або безкоштовні startup credits, startup/SME eligible, відкритий дедлайн, сума від €5K, не вимагати >12 міс існування
+СТАДІЯ:
+- Pre-seed, bridge $50K → full $250K, post-money cap $2.5M
+- Тракшн: 208 beta users, 64% completion rate
+- Команда: 5 співзасновників, <10 осіб (SME eligible)
+
+ВЖЕ ОТРИМАНІ (не шукати повторно):
+- Anthropic for Startups: $1,500 credits
+- AWS Activate: ~$25,100 credits
+- ElevenLabs: 33M characters
+- Mixpanel: 1 рік безкоштовно
+- PostHog: $50,000 credits
+- Sentry: $5,000 credits
+- Microsoft for Startups: $1,000
+
+ВІДХИЛЕНІ (не подавати повторно):
+- Google for Startups Cloud (31.03.2026)
+- Vercel for Startups (30.03.2026)
+
+ВЖЕ В ПАЙПЛАЙНІ (не дублювати):
+USF EDGE, EIT Jumpstarter, YC W27, NVIDIA Inception, Cloudflare, EIC Accelerator, Win-Win EDIH
+
+ВЖЕ НАДІСЛАНІ РАНІШЕ (не повторювати):
+- DigitalOcean Hatch (digitalocean.com/startups)
+- OVHcloud for Startups (startup.ovhcloud.com)
+- Open Horizons (openhorizonsproject.eu)
+- EIC Pre-Accelerator 2027 (eic.ec.europa.eu/eic-pre-accelerator)
+
+ВИМОГИ ДО НОВОГО ГРАНТУ:
+- Грошовий грант або безкоштовні startup credits (не консультації, не loans)
+- Startup/SME eligible
+- Відкритий дедлайн у майбутньому
+- Сума від €5K або credits від $10K
+- НЕ вимагати >12 місяців існування компанії
 """
 
 SEARCH_QUERIES = [
-    # UA
-    "Ukrainian startup grant program open applications 2026",
-    "Ukraine tech startup funding opportunity 2026",
-    "USF Ukrainian Startup Fund new cohort open 2026",
-    "USAID Ukraine startup grant open call 2026",
-    "EBRD Ukraine startup program 2026",
-    "1991 Accelerator Ukraine open batch 2026",
-    # EU основні
-    "EIC Accelerator open call AI startup 2026",
-    "Horizon Europe AI startup grant open 2026",
-    "EIT Digital startup funding open call 2026",
-    "EIC Pre-Accelerator Ukraine eligible open 2026",
-    "Eurostars startup grant open application 2026",
-    "Digital Europe Programme SME grant open 2026",
-    "EU startup grant non-dilutive open 2026",
-    "European Innovation Council startup funding 2026",
-    # UK
-    "Innovate UK Smart Grant open call 2026",
-    "UKRI AI startup grant open application 2026",
-    "UK startup grant AI technology open 2026",
-    # Молдова
-    "Moldova startup grant program open 2026",
-    "Moldova Innovation Technology Park grant 2026",
-    # Кіпр
-    "Cyprus startup grant RIF INNOVATE open 2026",
-    "Cyprus Digital Ministry startup grant 2026",
-    # Міжнародні акселератори
-    "MassChallenge open applications AI startup 2026",
-    "Plug and Play accelerator open batch 2026",
-    "Seedstars startup competition open 2026",
-    "Startup Wise Guys open application 2026",
-    "Nordic startup grant AI open 2026",
+    "grant.market нові гранти IT AI стартап 2026 відкрита заявка",
+    "grant.market Ukrainian startup fresh grants 2026",
+    "EIC Accelerator open call 2026 AI startup new",
+    "Horizon Europe open calls AI digital SME 2026",
+    "EIT Digital open call 2026 startup funding",
+    "EIC Pre-Accelerator 2026 Ukraine eligible open",
+    "Eurostars EUREKA open call 2026 grant startup",
+    "Digital Europe Programme open call 2026 AI SME",
+    "InvestEU SME startup grant 2026 open",
+    "Horizon Europe Ukrainian tech SME new call 2026",
+    "EU4Business Ukraine startup grant 2026",
+    "COSME EU startup grant 2026 open",
+    "European Social Fund startup grant digital 2026",
+    "Innovate UK Smart Grant open call 2026 AI startup",
+    "UKRI startup AI grant 2026 open application",
+    "Innovate UK Edge accelerator Ukraine startup 2026",
+    "UK startup grant AI digital 2026 new open",
+    "USF Ukrainian Startup Fund нова когорта грант 2026",
+    "USAID Ukraine tech startup grant 2026 open",
+    "EBRD Star Venture Ukraine startup 2026",
+    "CRDF Global Ukraine startup grant 2026",
+    "1991 Accelerator Ukraine grant 2026 open batch",
+    "Moldova Innovation Technology Park MITP grant startup 2026",
+    "ODIMM Moldova startup funding 2026",
+    "Moldova AI tech startup grant 2026 open call",
+    "RIF Cyprus INNOVATE SEED startup grant 2026",
+    "Cyprus Digital Modernisation AI startup grant 2026",
+    "MassChallenge 2026 open application AI startup",
+    "Plug and Play 2026 digital health open batch",
+    "Seedstars Eastern Europe startup 2026 open",
+    "Startup Wise Guys 2026 AI SaaS open application",
+    "Nordic Innovation startup grant 2026 AI",
     "Visegrad Fund startup grant Ukraine 2026",
-    # Нові корпоративні програми
-    "new startup program free credits AI tools 2026",
-    "tech company startup program launch 2026",
-    "free startup credits program AI SaaS 2026",
+    "new free startup program AI SaaS 2026 credits",
+    "startup credits program AI tools new 2026",
 ]
 
 def load_seen() -> set:
@@ -88,46 +117,45 @@ def save_seen(seen: set):
     with open(SEEN_FILE, "w") as f:
         json.dump(sorted(seen), f, indent=2)
 
-def grant_id(title: str) -> str:
-    return hashlib.md5(title.lower().strip()[:80].encode()).hexdigest()[:12]
+def grant_id(title: str, url: str = "") -> str:
+    # Хешуємо по URL якщо є — URL унікальний, назва може варіюватись
+    key = url.strip().rstrip("/").lower() if url else title.lower().strip()[:80]
+    return hashlib.md5(key.encode()).hexdigest()[:12]
 
-def single_search(query: str, client: anthropic.Anthropic) -> list[dict]:
+def research_grants(query: str, client: anthropic.Anthropic) -> list[dict]:
     prompt = f"""
-Виконай веб-пошук за запитом: "{query}"
+Ти — грант-аналітик для українського AI стартапу Psynex.
 
-Сьогодні: {DATE_STR}
-
-Знайди реальні відкриті гранти або безкоштовні startup programs.
-
-Профіль стартапу для оцінки:
+Профіль:
 {PSYNEX_PROFILE}
+
+Запит: "{query}"
+Сьогодні: {datetime.now().strftime('%d.%m.%Y')}
+
+Знайди РЕАЛЬНІ відкриті гранти та безкоштовні startup programs де Psynex може отримати гроші або безкоштовні credits.
+НЕ включай loans, субсидовані кредити або платні програми.
+НЕ включай програми зі списків "ВЖЕ ОТРИМАНІ", "ВІДХИЛЕНІ", "ВЖЕ В ПАЙПЛАЙНІ", "ВЖЕ НАДІСЛАНІ РАНІШЕ".
+НЕ включай програми що вимагають >12 місяців існування.
 
 Відповідай ЛИШЕ JSON (без markdown):
 [
   {{
-    "title": "Назва програми мовою оригіналу",
-    "url": "https://реальне посилання",
-    "deadline": "ДД.ММ.РРРР або Rolling або Невідомо",
-    "amount": "сума або credits",
+    "title": "Назва",
+    "url": "https://...",
+    "deadline": "ДД.ММ.РРРР або Rolling",
+    "amount": "суму або credits",
     "type": "grant або credits або accelerator",
     "country": "EU або UK або UA або CY або MD або Global",
-    "score": 7,
-    "reason": "чому підходить або не підходить Psynex — одне речення англійською"
+    "score": 8,
+    "reason": "чому підходить Psynex — одне речення"
   }}
 ]
-
-ПРАВИЛА:
-- Тільки реальні програми з реальними URL
-- НЕ включай: {', '.join(['USF EDGE', 'EIT Jumpstarter', 'YC', 'NVIDIA Inception', 'Cloudflare', 'EIC Accelerator', 'Win-Win EDIH', 'Google for Startups', 'Vercel', 'AWS', 'PostHog', 'Sentry', 'Mixpanel', 'Anthropic', 'Microsoft'])}
-- НЕ включай програми що вимагають >12 місяців існування
-- Тільки score >= 5
-- Максимум 2 результати
-- Якщо нічого — поверни []
+Тільки score >= 5. Максимум 5. Якщо нічого — поверни [].
 """
     try:
         response = client.messages.create(
             model="claude-opus-4-5",
-            max_tokens=1500,
+            max_tokens=2000,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": prompt}]
         )
@@ -138,55 +166,10 @@ def single_search(query: str, client: anthropic.Anthropic) -> list[dict]:
         end = text.rfind("]") + 1
         if start >= 0 and end > start:
             text = text[start:end]
-        return json.loads(text) if text else []
+        return json.loads(text) if text and text != "[]" else []
     except Exception as e:
-        print(f"    ⚠ {e}")
+        print(f"  ⚠ {e}")
         return []
-
-def translate_grant(items: list[dict], client: anthropic.Anthropic) -> list[dict]:
-    if not items:
-        return []
-    items_str = json.dumps(items, ensure_ascii=False, indent=2)
-    prompt = f"""
-Ось гранти:
-{items_str}
-
-Для кожного:
-1. title — переклади назву українською
-2. reason_ua — переклади reason українською, розшир до 2-3 речень: що це за програма, чому підходить Psynex
-3. Всі інші поля залиш без змін
-
-Відповідай ЛИШЕ JSON (без markdown):
-[
-  {{
-    "title": "Назва українською",
-    "url": "...",
-    "deadline": "...",
-    "amount": "...",
-    "type": "...",
-    "country": "...",
-    "score": 7,
-    "reason_ua": "2-3 речення українською..."
-  }}
-]
-"""
-    try:
-        response = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        text = response.content[0].text.strip()
-        if text.startswith("```"):
-            text = text.split("```")[1].lstrip("json").strip()
-        start = text.find("[")
-        end = text.rfind("]") + 1
-        if start >= 0 and end > start:
-            text = text[start:end]
-        return json.loads(text) if text else items
-    except Exception as e:
-        print(f"    ⚠ translate error: {e}")
-        return items
 
 def send_telegram(text: str):
     if len(text) > 4096:
@@ -194,7 +177,7 @@ def send_telegram(text: str):
     requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
         json={"chat_id": TELEGRAM_CHAT, "text": text, "parse_mode": "HTML"},
-        timeout=15
+        timeout=10
     ).raise_for_status()
 
 def format_grant(g: dict) -> str:
@@ -202,48 +185,43 @@ def format_grant(g: dict) -> str:
     emoji = "🔥" if score >= 9 else "✅" if score >= 7 else "🟡"
     flag = {"EU":"🇪🇺","UK":"🇬🇧","UA":"🇺🇦","CY":"🇨🇾","MD":"🇲🇩","Global":"🌍"}.get(g.get("country",""),"🌐")
     gtype = {"grant":"💵 Грант","credits":"💳 Credits","accelerator":"🚀 Акселератор"}.get(g.get("type",""),"💰")
-    reason = g.get("reason_ua") or g.get("reason","")
     return (
         f"{emoji} {flag} <b>{g['title']}</b> [{score}/10]\n\n"
         f"{gtype}\n"
         f"💰 <b>Сума:</b> {g.get('amount','?')}\n"
         f"📅 <b>Дедлайн:</b> {g.get('deadline','?')}\n"
-        f"🎯 {reason}\n\n"
+        f"🎯 {g.get('reason','—')}\n\n"
         f"🔗 {g.get('url','')}"
     )
 
 def main():
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    print(f"\n{'='*50}\nPsynex Grant Bot v4 | {now}\n{'='*50}")
+    print(f"\n{'='*50}\nPsynex Grant Bot | {now}\n{'='*50}")
 
     seen = load_seen()
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    all_raw = []
-    seen_urls = set()
+    all_grants, seen_urls = [], set()
 
     for i, query in enumerate(SEARCH_QUERIES, 1):
         print(f"[{i}/{len(SEARCH_QUERIES)}] {query[:55]}...")
-        results = single_search(query, client)
-        for r in results:
-            url = r.get("url","")
-            title = r.get("title","")
-            if url and url not in seen_urls and title:
+        for g in research_grants(query, client):
+            url = g.get("url", "").strip().rstrip("/").lower()
+            if url and url not in seen_urls:
                 seen_urls.add(url)
-                all_raw.append(r)
-        time.sleep(1)
+                all_grants.append(g)
 
-    print(f"\nЗнайдено сирих: {len(all_raw)}")
-
-    new_raw = [
-        r for r in all_raw
-        if grant_id(r.get("title","")) not in seen
-        and r.get("score",0) >= MIN_SCORE
+    # Фільтруємо по URL хешу (надійніший за назву)
+    new_grants = [
+        (grant_id(g.get("title",""), g.get("url","")), g)
+        for g in all_grants
+        if grant_id(g.get("title",""), g.get("url","")) not in seen
+        and g.get("score", 0) >= MIN_SCORE
     ]
-    new_raw.sort(key=lambda x: x.get("score",0), reverse=True)
+    new_grants.sort(key=lambda x: x[1].get("score", 0), reverse=True)
 
-    print(f"Нових релевантних: {len(new_raw)}")
+    print(f"\n🆕 Нових: {len(new_grants)}")
 
-    if not new_raw:
+    if not new_grants:
         send_telegram(
             f"📭 <b>Psynex Grant Bot — {now}</b>\n"
             f"Нових грантів сьогодні: 0\n"
@@ -252,11 +230,8 @@ def main():
         save_seen(seen)
         return
 
-    translated = translate_grant(new_raw[:5], client)
-
     sent = 0
-    for g in translated:
-        gid = grant_id(g.get("title",""))
+    for gid, g in new_grants:
         try:
             send_telegram(format_grant(g))
             seen.add(gid)
@@ -268,9 +243,8 @@ def main():
         f"📊 <b>Psynex Grant Bot — {now}</b>\n"
         f"Запитів: {len(SEARCH_QUERIES)} | Надіслано: {sent}"
     )
-
     save_seen(seen)
-    print(f"\n✅ Надіслано: {sent}")
+    print(f"✅ Надіслано: {sent}")
 
 if __name__ == "__main__":
     main()
